@@ -1,0 +1,17 @@
+# This docker-compose file is used for running the clients locally.
+# It will build and run a single client or five clients.
+# One client: "docker-compose -f 'docker-compose-client.yml' up -d --build 'client'"
+# Five clients: "docker-compose -f 'docker-compose-client.yml' up -d --build 'clientforloadtesting'"
+services:
+  # client for load testing:
+  clientforloadtesting:
+    build:
+      context: ./src/client
+      dockerfile: ../../Dockerfile.client
+    deploy:
+      replicas: 5
+  # client for normal testing
+  client:
+    build:
+      context: ./src/client
+      dockerfile: ../../Dockerfile.client

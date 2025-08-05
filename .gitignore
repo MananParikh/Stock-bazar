@@ -1,0 +1,7 @@
+# .gitignore
+/data/
+/target/
+.idea
+.DS_Store
+*.class
+*.pem

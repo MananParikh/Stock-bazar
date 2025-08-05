@@ -1,0 +1,85 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                             
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Unique project identifiers -->
+  <groupId>Microservices</groupId>
+  <artifactId>catalog-service</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <!-- Java version -->
+  <properties>
+    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.target>11</maven.compiler.target>
+  </properties>
+
+   <!-- Dependencies (external) -->
+  <dependencies>
+    <!-- Jackson core -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <version>2.15.0</version>
+    </dependency>
+
+    <!-- Jackson databind -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.15.0</version>
+    </dependency>
+
+    <!-- Jackson annotations -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-annotations</artifactId>
+      <version>2.15.0</version>
+    </dependency>
+  </dependencies>
+
+  <!-- Build settings -->
+  <build>
+    <plugins>
+      <!-- Java compiler plugin -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.14.0</version>
+        <configuration>
+          <source>11</source>
+          <target>11</target>
+        </configuration>
+      </plugin>
+
+      <!-- Plugin to package a runnable JAR -->
+      <plugin>
+      <artifactId>maven-assembly-plugin</artifactId>
+      <version>3.7.1</version>
+      <configuration>
+        <archive>
+          <manifest>
+            <mainClass>catalog.src.main.java.catalog.CatalogService</mainClass>
+          </manifest>
+        </archive>
+        <descriptorRefs>
+          <descriptorRef>jar-with-dependencies</descriptorRef>
+        </descriptorRefs>
+      </configuration>
+      <executions>
+        <execution>
+            <id>make-assembly</id>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

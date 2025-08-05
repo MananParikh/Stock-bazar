@@ -1,0 +1,19 @@
+# Using multi-stage approach
+# Build JAR file
+FROM maven:3.9.9-eclipse-temurin-11 AS builder
+WORKDIR /app
+# Copies pom.xml and code to /app in the container
+COPY . .
+# Builds JAR, add -DskipTests after "package" for faster build times
+RUN mvn clean package -DskipTests
+
+# Pull JAR into a clean environment and run
+FROM openjdk:11
+WORKDIR /app
+# Copy the JAR file from the builder stage to the current stage
+# JAR file will be located in /target directory after build
+COPY --from=builder /app/target/*-jar-with-dependencies.jar order-service.jar
+# Expose the port that the service will run on
+EXPOSE 8082
+# Run the service
+ENTRYPOINT ["java", "-jar", "order-service.jar"]

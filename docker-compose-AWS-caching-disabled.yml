@@ -1,0 +1,72 @@
+# This docker-compose file is used for running the docker-containers inside ec2 instance.
+# It will build and run only the services (no clients) with caching DISABLED by default.
+# Run with "docker-compose -f 'docker-compose-AWS-caching-disabled.yml' up -d --build"
+services:
+  #catalogservice:
+  catalogservice:
+    build:
+      context: ./src/catalog
+      dockerfile: ../../Dockerfile.catalog
+    ports:
+      - "8081:8081"
+    environment:
+      - frontendservice=frontendservice
+    volumes:
+      - ./data/catalog:/app/data
+  #orderservice:
+  orderservice0:
+    build:
+      context: ./src/order
+      dockerfile: ../../Dockerfile.order
+    ports:
+      - "8082:8082"
+    environment:
+      - catalogservice=http://catalogservice:8081
+      - orderservice0=self
+      - orderservice1=http://orderservice1:8082
+      - orderservice2=http://orderservice2:8082
+    volumes:
+      - ./data/order0:/app/data
+  orderservice1:
+    build:
+      context: ./src/order
+      dockerfile: ../../Dockerfile.order
+    ports:
+      - "8083:8082"
+    environment:
+      - catalogservice=http://catalogservice:8081
+      - orderservice0=http://orderservice0:8082
+      - orderservice1=self
+      - orderservice2=http://orderservice2:8082
+    volumes:
+      - ./data/order1:/app/data
+  orderservice2:
+    build:
+      context: ./src/order
+      dockerfile: ../../Dockerfile.order
+    ports:
+      - "8084:8082"
+    environment:
+      - catalogservice=http://catalogservice:8081
+      - orderservice0=http://orderservice0:8082
+      - orderservice1=http://orderservice1:8082
+      - orderservice2=self
+    volumes:
+      - ./data/order2:/app/data
+  #frontendservice:
+  frontendservice:
+    build:
+      context: ./src/frontend
+      dockerfile: ../../Dockerfile.frontendCachingDisabled
+    ports:
+      - "8080:8080"
+    environment:
+      - catalogservice=http://catalogservice:8081
+      - orderservice0=http://orderservice0:8082
+      - orderservice1=http://orderservice1:8082
+      - orderservice2=http://orderservice2:8082
+    depends_on:
+      - catalogservice
+      - orderservice0
+      - orderservice1
+      - orderservice2
