@@ -1,27 +1,79 @@
-# Group Work Division
-We worked together as a team for this lab, ensuring equal contribution from both members. We held daily meetings on Google Meet to discuss progress, address challenges, and plan the next steps. This regular communication allowed us to divide tasks efficiently and maintain a consistent pace throughout the project.
+# Stock Trading Microservices (CS 677 Lab 3)
 
-## Late days used
-Late days used on this lab: 0
+A small stock trading service built as four Java HTTP microservices that talk over REST, packaged with Docker Compose and deployed to a single AWS EC2 instance. Clients look up stock prices and place buy/sell orders, and the order service is replicated three ways so trading keeps working when a replica goes down.
 
-Late days used so far: Noah - 3, Manan - 2
+## Architecture
 
-## Manan Parikh (mananrajeshb@umass.edu)
-- Implemented Caching
-- Developed new API end-point: /orders/<order_number>
-- Updated client file, to send order-lookup requests
-- Worked on figuring out AWS deployment together
-- Wrote test cases
-- Wrote evaluation doc, output file, and design doc
-- Analyzed results and created graphs for evaluation document.
+A client hits the frontend on port 8080, which serves stock lookups out of an in-memory LRU cache (falling back to the catalog service on 8081) and forwards trades to whichever of the three order replicas (8082, 8083, 8084) is currently leader.
 
-## Noah Walls (nwalls@umass.edu)
-- Implemented Order Service replication
-- Restructured dockerfiles to support multiple order replicas
-- Designed leader crash handling and re-election mechanism in Frontend
-- Implemented Fault-Tolerance
-- Worked on figuring out AWS deployment together
-- Wrote and edited design doc
+| Service | Port | What it holds |
+|---|---|---|
+| frontend | 8080 | LRU cache of stock lookups, current leader address |
+| catalog | 8081 | Stock name, price, volume, quantity. Backed by `stocks.csv` |
+| orderservice0/1/2 | 8082 / 8083 / 8084 | Order log keyed by transaction number. Backed by `orders.csv` |
+
+A few things worth knowing about how the pieces interact:
+
+- **Cache invalidation is pushed, not polled.** When the catalog approves a trade it calls `GET /updateCache?name=<stock>` on the frontend, which drops that entry. So the cache never serves a price that a completed trade has already changed.
+- **Locking is per stock, not global.** The catalog keeps a `ReentrantLock` per stock for trades and a `ReentrantReadWriteLock` per stock for lookups, so trades on different stocks don't block each other. The cache uses the same idea for invalidation.
+- **State is written back on a timer.** Both the catalog and the order replicas flush their in-memory maps to CSV every 30 seconds, and reload from CSV on startup.
+
+## Why leader-based replication
+
+The order service needs a single writer. Transaction numbers are assigned sequentially and every replica has to agree on which number maps to which order, so letting any replica accept a trade would mean either coordinating number assignment or resolving conflicts after the fact. Routing every trade through one leader makes that problem go away, and the interesting failure handling then lives in two small places instead of being spread through the system.
+
+How it actually works:
+
+- **Election is done by the frontend, not by the replicas.** `ElectOrderServiceLeader()` pings `/health` on replicas 2, 1, 0 in that order and takes the first one that answers, so the highest-numbered live replica wins. It runs at startup and again any time a request to the leader throws.
+- **Replicas figure out their own role from traffic.** A replica that gets an order on `/trade` sets `isLeader = true`. One that gets an order on `/update` sets it to false. There is no separate leader handshake.
+- **Propagation happens before the client hears back.** The leader writes its own log, POSTs the order to both followers, then replies with the transaction number.
+- **Recovery is pull-based.** A restarting replica calls `GET /inform?transactionNumber=<last>` on the others and replays whatever it missed. A `-1` means it has nothing and wants the whole log.
+
+The trade-off is that propagation is best effort. If a follower is unreachable the leader logs the failure and moves on, so followers can drift until they restart and catch up through `/inform`. That was an acceptable trade for this lab, but it is not a consensus protocol and it does not survive a leader that dies mid-write.
+
+Connection timeouts throughout the app are deliberately short (20 to 40 ms). Everything runs on one host, so anything slower than that almost certainly means the other end is dead, and failing fast is what keeps a crashed leader from being visible to the client.
+
+## What we measured and what we found
+
+We ran 5 clients against the EC2 deployment, 1000 requests each, sweeping the follow-up trade probability `p` from 0 to 0.8 in steps of 0.2, with caching on and then off. Average latency in milliseconds:
+
+| p | lookup, cached | lookup, no cache | trade, cached | trade, no cache |
+|---|---|---|---|---|
+| 0.0 | 77 | 97 | - | - |
+| 0.2 | 80 | 100 | 87 | 105 |
+| 0.4 | 84 | 103 | 85 | 109 |
+| 0.6 | 93 | 96 | 93 | 96 |
+| 0.8 | 101 | 90 | 100 | 97 |
+
+**Caching helps below p = 0.6 and stops helping above it.** At low trade probability it takes roughly 20 ms off both lookups and trades, about a 20% improvement. At p = 0.6 the two configurations are within a couple of milliseconds of each other. At p = 0.8 caching is slightly *worse*: 101 ms vs 90 ms on lookups.
+
+The crossover comes from invalidation. Every successful trade takes the write lock on that stock's cache entry and removes it. As `p` climbs there are more trades and fewer lookups, so entries get invalidated faster than they get reused, and lookups end up queuing behind invalidation locks for a cache that rarely hits. Trades pay for it twice, since they already contend for locks in the catalog and now wait on the cache lock as well. Below p = 0.6 the hit rate is high enough that the saved round trips to the catalog more than cover the lock contention.
+
+The takeaway is that the cache is only worth having on a read-heavy workload, which is what we would expect but is easy to assume rather than check.
+
+## Running it locally
+
+Everything runs in containers, so Docker and Docker Compose are the only prerequisites. From the repo root:
+
+```bash
+./build.sh
+```
+
+That is a wrapper around `docker-compose -f 'docker-compose-local.yml' up -d --build`, which starts the catalog, all three order replicas, the frontend, and one client.
+
+Check that it came up:
+
+```bash
+curl http://localhost:8080/stocks/GameStart
+```
+
+To run clients separately from the services, bring up the services with `docker-compose-local.yml` and use `docker-compose-client.yml` for the clients. That file defines two services: `client` for a single client, and `clientforloadtesting` which runs 5 replicas for load testing.
+
+```bash
+docker-compose -f 'docker-compose-client.yml' up -d --build 'clientforloadtesting'
+```
+
+To run with caching off, point the frontend at `Dockerfile.frontendCachingDisabled` instead, or use `docker-compose-AWS-caching-disabled.yml`.
 
 # Steps for deployment on AWS EC2
 
@@ -195,3 +247,91 @@ docker-compose -f 'docker-compose-client.yml' up -d --build 'client'
 ```
 
 Observe average latency difference.
+
+# Reference
+
+## API
+
+What clients call on the frontend:
+
+| Request | Description | Response |
+|---|---|---|
+| `GET /stocks/<stock_name>` | Look up a stock | `{"data": {name, price, quantity}}` or `{"error": ...}` |
+| `POST /orders/` | Place a trade, body `{name, quantity, type}` where type is `buy` or `sell` | `{"data": {transaction_number}}` or `{"error": ...}` |
+| `GET /orders/<order_number>` | Look up a past order | `{"data": {name, quantity, type}}` or `{"error": ...}` |
+
+Internal endpoints, not meant for clients:
+
+| Endpoint | Called by | Purpose |
+|---|---|---|
+| `GET /updateCache?name=<stock>` on frontend | catalog | Invalidate one cache entry after a trade |
+| `GET /catalog?stock=<name>` on catalog | frontend | Stock lookup |
+| `POST /catalog` on catalog | order leader | Ask whether a trade can go through |
+| `GET /health` on order | frontend | Liveness check during election |
+| `POST /trade` on order | frontend | Place a trade. Receiving this marks the replica leader |
+| `POST /update` on order | order leader | Replicate an order. Receiving this marks the replica follower |
+| `GET /inform?transactionNumber=<n>` on order | recovering replica | Ask the leader for orders missed since `n` |
+
+## Configuration
+
+**Frontend** takes its arguments in `Dockerfile.frontend`:
+
+- `args[0]` caching on/off, default `true`
+- `args[1]` cache capacity, default `5`
+
+`Dockerfile.frontendCachingDisabled` is the same image with `false` passed in.
+
+**Client** takes its arguments in `Dockerfile.client`:
+
+- `args[0]` probability that a lookup is followed by a trade, default `0.8`
+- `args[1]` total requests, default `8`
+- `args[2]` print per-request and average latency, default `false`
+- `args[3]` frontend IPv4, needed only when the services are on EC2 and the client is local
+
+After finishing its requests, the client replays every successful trade through `GET /orders/<order_number>` and compares the response against what it recorded locally. Mismatches get printed. This is how we checked that replication was not losing or reordering anything.
+
+**Order replicas** identify themselves through environment variables. Each replica gets `orderservice0/1/2`, and its own entry is set to the literal string `self`. That is how a replica learns its own id without hardcoding anything per container, which keeps all three genuinely identical builds.
+
+## Tests
+
+JUnit tests live in `test/` and run against a live deployment, so bring the services up first.
+
+- `CatalogServiceTest` (2 tests) hits the catalog directly on 8081
+- `OrderServiceTest` (7 tests) hits an order replica directly on 8082
+- `FullApplicationTest` (9 tests) goes through the frontend on 8080
+- `CommonMethods` is a shared HTTP helper, not a test class
+
+Note that `Tesla` is used as the known-missing stock in the not-found tests. The catalog seeds ten stocks and Tesla is deliberately not one of them.
+
+## Repo layout
+
+```
+src/catalog     catalog service
+src/order       order service, built three times as the replicas
+src/frontend    frontend service and LRU cache
+src/client      load-generating client
+test/           JUnit tests
+data/           CSV state, mounted into the containers (gitignored)
+docs/           design doc, evaluation doc, test output
+images/         screenshots for the AWS walkthrough above
+```
+
+Compose files:
+
+- `docker-compose-local.yml` everything plus one client, for local work
+- `docker-compose-AWS.yml` services only, caching on
+- `docker-compose-AWS-caching-disabled.yml` services only, caching off
+- `docker-compose-client.yml` clients only, either one or five
+
+## Docs
+
+- `docs/Design Document.pdf` full design writeup for caching, replication, and fault tolerance
+- `docs/Evaluation Document.pdf` latency measurements and the charts the table above is drawn from
+- `docs/Tests Output.pdf` test run output plus the cache replacement and crash simulation answers
+
+## Known limitations
+
+- Follower updates are fire and forget. A follower that is down when a trade lands misses it until it restarts and pulls from `/inform`.
+- Transaction numbers come from the size of the order log, so a gap or an out-of-order replay would shift numbering. Recovery replays in order, which is what keeps this correct in practice.
+- Election is per frontend. There is only one frontend here, so replicas never see conflicting opinions about who leads, but nothing in the protocol would prevent that with more than one.
+- Catalog state is a single instance. It is not replicated, so it is the remaining single point of failure.
