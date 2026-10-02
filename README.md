@@ -101,7 +101,7 @@ Click `Create a new key pair`
 
 Name `lab3-ec2-auth`, Type `RSA`, Format `.pem`. Click `Create key pair`
 
-This will download the file `lab3-ec2-auth.pem`, move it to the project root directory
+This will download the file `lab3-ec2-auth.pem`, move it to the project root directory.
 
 You can verify your inputs on the website with the below screenshots.
 
